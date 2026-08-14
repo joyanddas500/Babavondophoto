@@ -79,7 +79,15 @@ export async function fetchDriveImages(
       throw new Error('Your Google session has expired. Please sign in again to access Drive.');
     }
     const errorData = await res.json().catch(() => ({}));
-    throw new Error(errorData.error?.message || `Failed to fetch Drive photos (${res.status})`);
+    const rawMsg: string = errorData.error?.message || '';
+    
+    if (rawMsg.toLowerCase().includes('drive api has not been used') || rawMsg.toLowerCase().includes('api is not enabled') || rawMsg.toLowerCase().includes('access not configured')) {
+      throw new Error('Google Drive API is NOT enabled in your Google Cloud project. Please open Google Cloud Console > APIs & Services > Library, search for "Google Drive API" and click Enable.');
+    }
+    if (rawMsg.toLowerCase().includes('insufficient') || rawMsg.toLowerCase().includes('scope') || res.status === 403) {
+      throw new Error(rawMsg || 'Drive permission not granted. Please click "Reconnect Drive" or add "https://www.googleapis.com/auth/drive.readonly" in your OAuth Consent Screen.');
+    }
+    throw new Error(rawMsg || `Failed to fetch Drive photos (${res.status})`);
   }
 
   const data = await res.json();
@@ -133,7 +141,16 @@ export async function fetchDriveFolders(
     if (res.status === 401) {
       throw new Error('Session expired. Please sign in again.');
     }
-    throw new Error('Failed to load Google Drive folders.');
+    const errorData = await res.json().catch(() => ({}));
+    const rawMsg: string = errorData.error?.message || '';
+
+    if (rawMsg.toLowerCase().includes('drive api has not been used') || rawMsg.toLowerCase().includes('api is not enabled') || rawMsg.toLowerCase().includes('access not configured')) {
+      throw new Error('Google Drive API is NOT enabled in your Google Cloud project. Please open Google Cloud Console > APIs & Services > Library, search for "Google Drive API" and click Enable.');
+    }
+    if (rawMsg.toLowerCase().includes('insufficient') || rawMsg.toLowerCase().includes('scope') || res.status === 403) {
+      throw new Error(rawMsg || 'Drive permission not granted. Please click "Reconnect Drive" or add "https://www.googleapis.com/auth/drive.readonly" in your OAuth Consent Screen.');
+    }
+    throw new Error(rawMsg || 'Failed to load Google Drive folders.');
   }
 
   const data = await res.json();
