@@ -8,7 +8,6 @@ import {
   initAuth, 
   signInWithGoogle, 
   signOutGoogle, 
-  getAccessToken,
   getGoogleClientId
 } from './lib/googleAuth';
 import { 
@@ -16,13 +15,9 @@ import {
   getSavedGalleries, 
   findGalleryById 
 } from './lib/shareService';
-import { SAMPLE_GALLERIES } from './lib/sampleData';
 import { Navbar } from './components/Navbar';
-import { ExploreFeatured } from './components/ExploreFeatured';
+import { StudioDashboard } from './components/StudioDashboard';
 import { GalleryView } from './components/GalleryView';
-import { GalleryCreator } from './components/GalleryCreator';
-import { MyGalleries } from './components/MyGalleries';
-import { VercelGuideModal } from './components/VercelGuideModal';
 import { GoogleConsoleModal } from './components/GoogleConsoleModal';
 
 export default function App() {
@@ -31,11 +26,12 @@ export default function App() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(false);
   const [activeGallery, setActiveGallery] = useState<GalleryConfig | null>(null);
-  const [editingGallery, setEditingGallery] = useState<GalleryConfig | null>(null);
   const [savedGalleries, setSavedGalleries] = useState<GalleryConfig[]>([]);
-  const [isDeployGuideOpen, setIsDeployGuideOpen] = useState(false);
   const [isGoogleConsoleModalOpen, setIsGoogleConsoleModalOpen] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  
+  // Track if current visitor arrived via a shared client link (should only see the photo portal, not admin)
+  const [isDirectClientLink, setIsDirectClientLink] = useState(false);
 
   // Refresh saved galleries list from local storage
   const refreshSavedGalleries = useCallback(() => {
@@ -56,6 +52,7 @@ export default function App() {
         if (decoded) {
           setActiveGallery(decoded);
           setActiveTab('view-gallery');
+          setIsDirectClientLink(true);
           return true;
         }
       }
@@ -68,6 +65,7 @@ export default function App() {
         if (decoded) {
           setActiveGallery(decoded);
           setActiveTab('view-gallery');
+          setIsDirectClientLink(true);
           return true;
         }
       }
@@ -78,6 +76,7 @@ export default function App() {
         if (found) {
           setActiveGallery(found);
           setActiveTab('view-gallery');
+          setIsDirectClientLink(true);
           return true;
         }
       }
@@ -112,7 +111,6 @@ export default function App() {
     try {
       const clientId = customClientId || getGoogleClientId();
       if (!clientId) {
-        // Prompt user to enter their Google Cloud Console Client ID
         setIsGoogleConsoleModalOpen(true);
         setIsLoadingAuth(false);
         return;
@@ -143,45 +141,33 @@ export default function App() {
     setAccessToken(null);
   };
 
-  // When a user selects a gallery to view
-  const handleSelectGallery = (gallery: GalleryConfig) => {
+  // When a studio admin clicks "VISIT" from their dashboard
+  const handleSelectGalleryFromAdmin = (gallery: GalleryConfig) => {
     setActiveGallery(gallery);
+    setIsDirectClientLink(false); // Admin mode has back button
     setActiveTab('view-gallery');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // When a user edits a gallery
-  const handleEditGallery = (gallery: GalleryConfig) => {
-    setEditingGallery(gallery);
-    setActiveTab('create');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  // When a new gallery is created/saved
-  const handleGalleryCreated = (gallery: GalleryConfig) => {
-    refreshSavedGalleries();
-    setActiveGallery(gallery);
-    setEditingGallery(null);
-    setActiveTab('view-gallery');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  // Start new gallery creation
-  const handleStartCreate = () => {
-    setEditingGallery(null);
-    setActiveTab('create');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  // If a guest arrives via a shared folder link (#gallery=... or ?id=...), render ONLY their secure photo portal
+  if (isDirectClientLink && activeGallery) {
+    return (
+      <GalleryView
+        gallery={activeGallery}
+        isOwner={false}
+        isDirectClientLink={true}
+      />
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
+    <div className="min-h-screen bg-[#FAF8F5] text-stone-900 flex flex-col font-sans">
       {/* Top Navbar */}
       <Navbar
         activeTab={activeTab}
         setActiveTab={(tab) => {
           setActiveTab(tab);
           if (tab !== 'view-gallery') {
-            // clear hash if user navigates back to explore/create
             if (window.location.hash) {
               history.pushState(null, '', window.location.pathname);
             }
@@ -192,7 +178,6 @@ export default function App() {
         onSignOut={handleSignOut}
         isLoadingAuth={isLoadingAuth}
         savedGalleriesCount={savedGalleries.length}
-        onOpenDeployGuide={() => setIsDeployGuideOpen(true)}
         onOpenGoogleConsoleModal={() => setIsGoogleConsoleModalOpen(true)}
       />
 
@@ -221,82 +206,29 @@ export default function App() {
 
       {/* Main Content Areas */}
       <main className="flex-1">
-        {activeTab === 'explore' && (
-          <ExploreFeatured
-            onSelectGallery={handleSelectGallery}
-            onCreateNew={handleStartCreate}
-            onOpenDeployGuide={() => setIsDeployGuideOpen(true)}
+        {activeTab === 'view-gallery' && activeGallery ? (
+          <GalleryView
+            gallery={activeGallery}
+            onBack={() => {
+              setActiveTab('explore');
+              if (window.location.hash) {
+                history.pushState(null, '', window.location.pathname);
+              }
+            }}
+            isOwner={true}
+            isDirectClientLink={false}
           />
-        )}
-
-        {activeTab === 'create' && (
-          <GalleryCreator
+        ) : (
+          <StudioDashboard
             user={user}
             accessToken={accessToken}
             onSignIn={() => handleSignIn()}
-            onGalleryCreated={handleGalleryCreated}
-            initialGallery={editingGallery}
-            onOpenGoogleConsoleModal={() => setIsGoogleConsoleModalOpen(true)}
-          />
-        )}
-
-        {activeTab === 'my-galleries' && (
-          <MyGalleries
-            galleries={savedGalleries}
-            onSelectGallery={handleSelectGallery}
-            onEditGallery={handleEditGallery}
-            onCreateNew={handleStartCreate}
+            savedGalleries={savedGalleries}
+            onSelectGallery={handleSelectGalleryFromAdmin}
             onRefreshList={refreshSavedGalleries}
           />
         )}
-
-        {activeTab === 'view-gallery' && activeGallery && (
-          <GalleryView
-            gallery={activeGallery}
-            onBack={() => setActiveTab('explore')}
-            onEdit={handleEditGallery}
-            isOwner={true}
-            onCreateYourOwn={handleStartCreate}
-          />
-        )}
       </main>
-
-      {/* Footer */}
-      <footer className="border-t border-slate-200 bg-white py-8 px-4 sm:px-6 lg:px-8 text-xs text-slate-500">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <span className="font-display font-bold text-slate-800">BABAVONDOPHOTO</span>
-            <span>•</span>
-            <span>Google Drive Photo Gallery Studio</span>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => setIsGoogleConsoleModalOpen(true)}
-              className="text-indigo-600 hover:text-indigo-800 font-medium"
-            >
-              Google Console Setup
-            </button>
-            <span>•</span>
-            <button
-              onClick={() => setIsDeployGuideOpen(true)}
-              className="text-slate-600 hover:text-slate-900"
-            >
-              Deploy to Vercel
-            </button>
-            <span>•</span>
-            <button
-              onClick={() => {
-                setActiveGallery(SAMPLE_GALLERIES[0]);
-                setActiveTab('view-gallery');
-              }}
-              className="text-slate-600 hover:text-slate-900"
-            >
-              Demo Album
-            </button>
-          </div>
-        </div>
-      </footer>
 
       {/* Google Cloud Console Setup Modal */}
       <GoogleConsoleModal
@@ -305,13 +237,6 @@ export default function App() {
         onConnectWithClientId={(clientId) => handleSignIn(clientId)}
         initialError={authError}
       />
-
-      {/* Vercel & GitHub Deployment Guide Modal */}
-      <VercelGuideModal
-        isOpen={isDeployGuideOpen}
-        onClose={() => setIsDeployGuideOpen(false)}
-      />
     </div>
   );
 }
-
