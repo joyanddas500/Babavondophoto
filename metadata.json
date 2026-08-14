@@ -1,0 +1,6 @@
+{
+  "name": "BABAVONDOPHOTO",
+  "description": "BABAVONDOPHOTO — Create and share photo galleries directly from Google Drive with link sharing, slideshow view, and album management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
