@@ -12,13 +12,15 @@ import {
 } from './lib/googleAuth';
 import { 
   decodeGalleryFromUrl, 
-  getSavedGalleries, 
+  fetchSavedGalleries,
+  fetchGalleryById,
   findGalleryById 
 } from './lib/shareService';
 import { Navbar } from './components/Navbar';
 import { StudioDashboard } from './components/StudioDashboard';
 import { GalleryView } from './components/GalleryView';
 import { GoogleConsoleModal } from './components/GoogleConsoleModal';
+import { RefreshCw, Camera, AlertCircle } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('explore');
@@ -32,56 +34,77 @@ export default function App() {
   
   // Track if current visitor arrived via a shared client link (should only see the photo portal, not admin)
   const [isDirectClientLink, setIsDirectClientLink] = useState(false);
+  const [isLoadingClientLink, setIsLoadingClientLink] = useState(false);
+  const [clientLinkError, setClientLinkError] = useState<string | null>(null);
 
-  // Refresh saved galleries list from local storage
-  const refreshSavedGalleries = useCallback(() => {
-    const list = getSavedGalleries();
-    setSavedGalleries(list);
+  // Refresh saved galleries list from server and local storage
+  const refreshSavedGalleries = useCallback(async () => {
+    try {
+      const list = await fetchSavedGalleries();
+      setSavedGalleries(list);
+    } catch (err) {
+      console.error('Failed to load saved galleries:', err);
+    }
   }, []);
 
-  // 1. Check for shared gallery in URL hash or query param on initial mount
+  // 1. Check for shared gallery in URL on initial mount
   useEffect(() => {
     refreshSavedGalleries();
 
-    const parseUrlForGallery = () => {
-      // Check hash e.g. #gallery=...
+    const parseUrlForGallery = async () => {
+      // Check query parameter ?id=... or ?p=...
+      const params = new URLSearchParams(window.location.search);
+      const idParam = params.get('id') || params.get('p');
+      
+      if (idParam) {
+        setIsDirectClientLink(true);
+        setIsLoadingClientLink(true);
+        setClientLinkError(null);
+
+        try {
+          const gallery = await fetchGalleryById(idParam);
+          if (gallery) {
+            setActiveGallery(gallery);
+            setActiveTab('view-gallery');
+          } else {
+            setClientLinkError('This photo portal could not be found or has expired.');
+          }
+        } catch (err) {
+          setClientLinkError('Unable to load photo portal. Please check your internet connection.');
+        } finally {
+          setIsLoadingClientLink(false);
+        }
+        return;
+      }
+
+      // Check query parameter ?gallery=...
+      const galleryParam = params.get('gallery');
+      if (galleryParam) {
+        setIsDirectClientLink(true);
+        const decoded = decodeGalleryFromUrl(galleryParam);
+        if (decoded) {
+          setActiveGallery(decoded);
+          setActiveTab('view-gallery');
+        } else {
+          setClientLinkError('Invalid gallery link format.');
+        }
+        return;
+      }
+
+      // Check legacy hash e.g. #gallery=...
       const hash = window.location.hash;
       if (hash.startsWith('#gallery=')) {
+        setIsDirectClientLink(true);
         const encoded = hash.replace('#gallery=', '');
         const decoded = decodeGalleryFromUrl(encoded);
         if (decoded) {
           setActiveGallery(decoded);
           setActiveTab('view-gallery');
-          setIsDirectClientLink(true);
-          return true;
+        } else {
+          setClientLinkError('Invalid gallery link format.');
         }
+        return;
       }
-
-      // Check query parameter e.g. ?gallery=... or ?id=...
-      const params = new URLSearchParams(window.location.search);
-      const galleryParam = params.get('gallery');
-      if (galleryParam) {
-        const decoded = decodeGalleryFromUrl(galleryParam);
-        if (decoded) {
-          setActiveGallery(decoded);
-          setActiveTab('view-gallery');
-          setIsDirectClientLink(true);
-          return true;
-        }
-      }
-
-      const idParam = params.get('id');
-      if (idParam) {
-        const found = findGalleryById(idParam);
-        if (found) {
-          setActiveGallery(found);
-          setActiveTab('view-gallery');
-          setIsDirectClientLink(true);
-          return true;
-        }
-      }
-
-      return false;
     };
 
     parseUrlForGallery();
@@ -149,8 +172,55 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // If a guest arrives via a shared folder link (#gallery=... or ?id=...), render ONLY their secure photo portal
-  if (isDirectClientLink && activeGallery) {
+  // ================= CLIENT DIRECT VIEW ISOLATION =================
+  // If a guest arrives via a shared link (?id=... or ?p=...), show ONLY client view or loading/error
+  if (isDirectClientLink) {
+    if (isLoadingClientLink) {
+      return (
+        <div className="min-h-screen w-full flex flex-col items-center justify-center p-6 bg-[#FAF8F5] text-stone-900">
+          <div className="flex flex-col items-center space-y-4 text-center">
+            <div className="w-14 h-14 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center shadow-xs">
+              <RefreshCw className="w-6 h-6 animate-spin text-rose-600" />
+            </div>
+            <div className="space-y-1">
+              <h2 className="font-cinzel text-lg font-bold tracking-[0.15em] text-stone-900 uppercase">
+                BABAVONDOPICTURE
+              </h2>
+              <p className="text-xs text-stone-500 font-mono-code uppercase tracking-wider">
+                Connecting to private photo portal...
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (clientLinkError || !activeGallery) {
+      return (
+        <div className="min-h-screen w-full flex flex-col items-center justify-center p-6 bg-[#FAF8F5] text-stone-900">
+          <div className="max-w-md w-full bg-white rounded-3xl border border-stone-200 p-8 text-center space-y-5 shadow-xs">
+            <div className="w-12 h-12 rounded-full bg-rose-50 border border-rose-200 text-rose-600 mx-auto flex items-center justify-center">
+              <AlertCircle className="w-6 h-6" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="font-cinzel text-lg font-bold text-stone-900 uppercase tracking-wider">
+                Portal Not Found
+              </h3>
+              <p className="text-xs text-stone-600 font-sans leading-relaxed">
+                {clientLinkError || 'This gallery link may be incomplete or expired. Please contact the studio for an updated link.'}
+              </p>
+            </div>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-6 py-2.5 rounded-xl font-cinzel font-bold text-xs uppercase tracking-wider text-white bg-stone-900 hover:bg-stone-800 transition-colors"
+            >
+              Retry Connection
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <GalleryView
         gallery={activeGallery}
@@ -160,6 +230,7 @@ export default function App() {
     );
   }
 
+  // ================= ADMIN STUDIO DASHBOARD =================
   return (
     <div className="min-h-screen bg-[#FAF8F5] text-stone-900 flex flex-col font-sans">
       {/* Top Navbar */}
@@ -168,7 +239,7 @@ export default function App() {
         setActiveTab={(tab) => {
           setActiveTab(tab);
           if (tab !== 'view-gallery') {
-            if (window.location.hash) {
+            if (window.location.search || window.location.hash) {
               history.pushState(null, '', window.location.pathname);
             }
           }
@@ -211,7 +282,7 @@ export default function App() {
             gallery={activeGallery}
             onBack={() => {
               setActiveTab('explore');
-              if (window.location.hash) {
+              if (window.location.search || window.location.hash) {
                 history.pushState(null, '', window.location.pathname);
               }
             }}

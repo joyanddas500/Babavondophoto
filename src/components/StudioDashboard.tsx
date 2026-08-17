@@ -15,7 +15,7 @@ import {
   Image as ImageIcon
 } from 'lucide-react';
 import { GoogleUser, GalleryConfig, DriveFile, DriveFolder } from '../types/gallery';
-import { generateShareUrl, saveGallery, deleteGallery } from '../lib/shareService';
+import { generateShareUrl, saveGalleryAsync, deleteGalleryAsync } from '../lib/shareService';
 import { fetchDriveFolders, fetchDriveImages } from '../lib/driveApi';
 
 interface StudioDashboardProps {
@@ -111,8 +111,8 @@ export const StudioDashboard: React.FC<StudioDashboardProps> = ({
         coverPhotoId: photos[0]?.id,
       };
 
-      // Save to localStorage
-      saveGallery(newGallery);
+      // Save to server & local storage
+      await saveGalleryAsync(newGallery);
       onRefreshList();
 
       setTaskNotice(`Gallery for "${newGallery.title}" was successfully created (${photos.length} photos synced).`);
@@ -143,7 +143,7 @@ export const StudioDashboard: React.FC<StudioDashboardProps> = ({
         const result = await fetchDriveImages(accessToken, { pageSize: 100 });
         if (result.files.length > 0) {
           gallery.photos = result.files;
-          saveGallery(gallery);
+          await saveGalleryAsync(gallery);
           onRefreshList();
         }
       }
@@ -157,9 +157,9 @@ export const StudioDashboard: React.FC<StudioDashboardProps> = ({
   };
 
   // Delete gallery
-  const handleDelete = (id: string, name: string) => {
+  const handleDelete = async (id: string, name: string) => {
     if (confirm(`Are you sure you want to remove the portal "${name}"?`)) {
-      deleteGallery(id);
+      await deleteGalleryAsync(id);
       onRefreshList();
     }
   };

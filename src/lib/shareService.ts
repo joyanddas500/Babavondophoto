@@ -5,10 +5,20 @@ import { SAMPLE_GALLERIES } from './sampleData';
 const LOCAL_STORAGE_KEY = 'drive_gallery_my_albums_v1';
 
 /**
- * Compresses a GalleryConfig into an ultra-compact URI-safe string
+ * Generate a short, clean, WhatsApp-friendly shareable URL for a gallery.
+ * Example output: https://yourdomain.com/?id=portal_17300_abc
+ * Length is ~45-60 characters (instead of 4300+ characters), so WhatsApp never hangs!
+ */
+export function generateShareUrl(gallery: GalleryConfig): string {
+  const base = window.location.origin + window.location.pathname;
+  // Use clean query param ?id=...
+  return `${base}?id=${encodeURIComponent(gallery.id)}`;
+}
+
+/**
+ * Compresses a GalleryConfig into an ultra-compact URI-safe string (for standalone offline fallback)
  */
 export function encodeGalleryToUrl(gallery: GalleryConfig): string {
-  // Minimize payload by trimming unnecessary empty fields
   const slimGallery = {
     ...gallery,
     photos: gallery.photos.map((p) => ({
@@ -28,8 +38,7 @@ export function encodeGalleryToUrl(gallery: GalleryConfig): string {
   };
 
   const jsonString = JSON.stringify(slimGallery);
-  const compressed = LZString.compressToEncodedURIComponent(jsonString);
-  return compressed;
+  return LZString.compressToEncodedURIComponent(jsonString);
 }
 
 /**
@@ -39,7 +48,6 @@ export function decodeGalleryFromUrl(encodedString: string): GalleryConfig | nul
   if (!encodedString || !encodedString.trim()) return null;
 
   try {
-    // 1. Try LZString decompression
     const decompressed = LZString.decompressFromEncodedURIComponent(encodedString);
     if (decompressed) {
       const parsed = JSON.parse(decompressed);
@@ -48,10 +56,9 @@ export function decodeGalleryFromUrl(encodedString: string): GalleryConfig | nul
       }
     }
   } catch {
-    // continue to fallbacks
+    // continue
   }
 
-  // 2. Fallback: Base64 decode
   try {
     const raw = decodeURIComponent(encodedString);
     const decoded = atob(raw);
@@ -63,30 +70,88 @@ export function decodeGalleryFromUrl(encodedString: string): GalleryConfig | nul
     // continue
   }
 
-  // 3. Fallback: Raw JSON string
   try {
     const parsed = JSON.parse(decodeURIComponent(encodedString));
     if (parsed && parsed.title && Array.isArray(parsed.photos)) {
       return parsed as GalleryConfig;
     }
   } catch {
-    // failure
+    // continue
   }
 
   return null;
 }
 
 /**
- * Generate full shareable URL for this gallery
+ * Asynchronously fetch all saved galleries from the server, syncing with local storage
  */
-export function generateShareUrl(gallery: GalleryConfig): string {
-  const encoded = encodeGalleryToUrl(gallery);
-  const origin = window.location.origin + window.location.pathname;
-  return `${origin}#gallery=${encoded}`;
+export async function fetchSavedGalleries(): Promise<GalleryConfig[]> {
+  try {
+    const res = await fetch('/api/galleries');
+    if (res.ok) {
+      const serverList = await res.json();
+      if (Array.isArray(serverList)) {
+        // Sync local cache
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(serverList));
+        return serverList;
+      }
+    }
+  } catch (err) {
+    console.warn('Could not fetch galleries from server, using local storage cache:', err);
+  }
+
+  return getSavedGalleries();
 }
 
 /**
- * Local Storage helpers for "My Created Galleries"
+ * Asynchronously fetch a single gallery by ID from the server
+ */
+export async function fetchGalleryById(id: string): Promise<GalleryConfig | null> {
+  if (!id) return null;
+
+  // 1. Try server first
+  try {
+    const res = await fetch(`/api/galleries/${encodeURIComponent(id)}`);
+    if (res.ok) {
+      const gallery = await res.json();
+      if (gallery && gallery.id && gallery.title) {
+        return gallery as GalleryConfig;
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to fetch gallery from server by ID:', err);
+  }
+
+  // 2. Fallback to localStorage
+  const local = findGalleryById(id);
+  if (local) return local;
+
+  return null;
+}
+
+/**
+ * Save gallery to both server API and local storage
+ */
+export async function saveGalleryAsync(gallery: GalleryConfig): Promise<void> {
+  // 1. Save locally immediately
+  saveGallery(gallery);
+
+  // 2. Persist to server API
+  try {
+    await fetch('/api/galleries', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(gallery),
+    });
+  } catch (err) {
+    console.error('Failed to sync gallery with server:', err);
+  }
+}
+
+/**
+ * Local Storage helpers (synchronous cache)
  */
 export function getSavedGalleries(): GalleryConfig[] {
   try {
@@ -98,7 +163,7 @@ export function getSavedGalleries(): GalleryConfig[] {
       }
     }
   } catch (err) {
-    console.error('Failed to read saved galleries:', err);
+    console.error('Failed to read saved galleries from localStorage:', err);
   }
   return [];
 }
@@ -126,7 +191,21 @@ export function saveGallery(gallery: GalleryConfig): void {
     }
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
   } catch (err) {
-    console.error('Failed to save gallery:', err);
+    console.error('Failed to save gallery to localStorage:', err);
+  }
+}
+
+export async function deleteGalleryAsync(id: string): Promise<void> {
+  // Delete from local cache
+  deleteGallery(id);
+
+  // Delete from server
+  try {
+    await fetch(`/api/galleries/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+  } catch (err) {
+    console.error('Failed to delete gallery from server:', err);
   }
 }
 
@@ -136,12 +215,12 @@ export function deleteGallery(id: string): void {
     const updated = current.filter((g) => g.id !== id);
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
   } catch (err) {
-    console.error('Failed to delete gallery:', err);
+    console.error('Failed to delete gallery from localStorage:', err);
   }
 }
 
 /**
- * Finds a gallery by ID either from local storage or sample galleries
+ * Finds a gallery by ID from local cache or sample galleries
  */
 export function findGalleryById(id: string): GalleryConfig | null {
   const saved = getSavedGalleries();
