@@ -14,13 +14,14 @@ import {
   decodeGalleryFromUrl, 
   fetchSavedGalleries,
   fetchGalleryById,
-  findGalleryById 
+  findGalleryById,
+  saveGallery 
 } from './lib/shareService';
 import { Navbar } from './components/Navbar';
 import { StudioDashboard } from './components/StudioDashboard';
 import { GalleryView } from './components/GalleryView';
 import { GoogleConsoleModal } from './components/GoogleConsoleModal';
-import { RefreshCw, Camera, AlertCircle } from 'lucide-react';
+import { RefreshCw, AlertCircle } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('explore');
@@ -52,32 +53,24 @@ export default function App() {
     refreshSavedGalleries();
 
     const parseUrlForGallery = async () => {
-      // Check query parameter ?id=... or ?p=...
       const params = new URLSearchParams(window.location.search);
-      const idParam = params.get('id') || params.get('p');
       
-      if (idParam) {
+      // Case A: Ultra-compact self-contained portal token (?p=...)
+      const pParam = params.get('p');
+      if (pParam) {
         setIsDirectClientLink(true);
-        setIsLoadingClientLink(true);
-        setClientLinkError(null);
-
-        try {
-          const gallery = await fetchGalleryById(idParam);
-          if (gallery) {
-            setActiveGallery(gallery);
-            setActiveTab('view-gallery');
-          } else {
-            setClientLinkError('This photo portal could not be found or has expired.');
-          }
-        } catch (err) {
-          setClientLinkError('Unable to load photo portal. Please check your internet connection.');
-        } finally {
-          setIsLoadingClientLink(false);
+        const decoded = decodeGalleryFromUrl(pParam);
+        if (decoded) {
+          setActiveGallery(decoded);
+          setActiveTab('view-gallery');
+          setClientLinkError(null);
+        } else {
+          setClientLinkError('Invalid or corrupted photo portal link.');
         }
         return;
       }
 
-      // Check query parameter ?gallery=...
+      // Case B: Legacy/Direct compressed parameter (?gallery=...)
       const galleryParam = params.get('gallery');
       if (galleryParam) {
         setIsDirectClientLink(true);
@@ -85,13 +78,14 @@ export default function App() {
         if (decoded) {
           setActiveGallery(decoded);
           setActiveTab('view-gallery');
+          setClientLinkError(null);
         } else {
-          setClientLinkError('Invalid gallery link format.');
+          setClientLinkError('Invalid or corrupted photo portal link.');
         }
         return;
       }
 
-      // Check legacy hash e.g. #gallery=...
+      // Case C: Legacy hash format (#gallery=...)
       const hash = window.location.hash;
       if (hash.startsWith('#gallery=')) {
         setIsDirectClientLink(true);
@@ -100,8 +94,42 @@ export default function App() {
         if (decoded) {
           setActiveGallery(decoded);
           setActiveTab('view-gallery');
+          setClientLinkError(null);
         } else {
-          setClientLinkError('Invalid gallery link format.');
+          setClientLinkError('Invalid or corrupted photo portal link.');
+        }
+        return;
+      }
+
+      // Case D: Server ID lookup (?id=...)
+      const idParam = params.get('id');
+      if (idParam) {
+        setIsDirectClientLink(true);
+        setIsLoadingClientLink(true);
+        setClientLinkError(null);
+
+        try {
+          // Check local cache first
+          const cached = findGalleryById(idParam);
+          if (cached) {
+            setActiveGallery(cached);
+            setActiveTab('view-gallery');
+            setIsLoadingClientLink(false);
+            return;
+          }
+
+          // Then server
+          const gallery = await fetchGalleryById(idParam);
+          if (gallery) {
+            setActiveGallery(gallery);
+            setActiveTab('view-gallery');
+          } else {
+            setClientLinkError('This photo portal could not be found or has expired.');
+          }
+        } catch (err) {
+          setClientLinkError('Unable to load photo portal. Please check your connection.');
+        } finally {
+          setIsLoadingClientLink(false);
         }
         return;
       }
@@ -173,7 +201,7 @@ export default function App() {
   };
 
   // ================= CLIENT DIRECT VIEW ISOLATION =================
-  // If a guest arrives via a shared link (?id=... or ?p=...), show ONLY client view or loading/error
+  // If a guest arrives via a shared link (?p=... or ?id=...), show ONLY client view or loading/error
   if (isDirectClientLink) {
     if (isLoadingClientLink) {
       return (
@@ -207,14 +235,16 @@ export default function App() {
                 Portal Not Found
               </h3>
               <p className="text-xs text-stone-600 font-sans leading-relaxed">
-                {clientLinkError || 'This gallery link may be incomplete or expired. Please contact the studio for an updated link.'}
+                {clientLinkError || 'This photo portal could not be found or has expired. Please contact the studio for an updated link.'}
               </p>
             </div>
             <button
-              onClick={() => window.location.reload()}
+              onClick={() => {
+                window.location.href = window.location.origin + window.location.pathname;
+              }}
               className="px-6 py-2.5 rounded-xl font-cinzel font-bold text-xs uppercase tracking-wider text-white bg-stone-900 hover:bg-stone-800 transition-colors"
             >
-              Retry Connection
+              Return to Studio Home
             </button>
           </div>
         </div>
